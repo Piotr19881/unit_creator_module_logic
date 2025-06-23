@@ -1,0 +1,114 @@
+<!DOCTYPE html>
+<html lang="pl">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Kreator Domów Modułowych - Test Logiki</title>
+    <link rel="stylesheet" href="{{ url_for('static', filename='css/style.css') }}">
+    <link href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.0.0/css/all.min.css" rel="stylesheet">
+</head>
+<body>
+    <div class="container">
+        <header>
+            <h1><i class="fas fa-home"></i> Kreator Domów Modułowych</h1>
+            <p>Test logiki dodawania i łączenia modułów</p>
+        </header>
+
+        <div class="main-content">            <!-- Panel kontrolny -->
+            <div class="control-panel">
+                <div class="section">
+                    <h3><i class="fas fa-plus-circle"></i> Dodaj Moduł</h3>                    <div class="info-note">
+                        <small><i class="fas fa-info-circle"></i> Wymiary to całkowite gabaryty modułu (z konturem). Grubość konturu: dom szkieletowy 25cm, pawilon 12cm.</small>
+                    </div>
+                    <div class="info-note" style="background: #f3e5f5; border-color: #9c27b0;">
+                        <small><i class="fas fa-mouse-pointer"></i> Lewy klik - zaznacz/przeciągnij moduł | Prawy klik - obróć moduł o 90°</small>
+                    </div>
+                    <form id="moduleForm">
+                        <div class="form-group">
+                            <label for="moduleName">Nazwa modułu:</label>
+                            <input type="text" id="moduleName" placeholder="np. Salon, Kuchnia">
+                        </div>
+                        
+                        <div class="form-group">
+                            <label for="moduleWidth">Szerokość (m):</label>
+                            <input type="number" id="moduleWidth" min="2" max="4.5" step="0.1" placeholder="2.0 - 4.5">
+                            <small>Zakres: 2.0 - 4.5 m</small>
+                        </div>
+                        
+                        <div class="form-group">
+                            <label for="moduleHeight">Długość (m):</label>
+                            <input type="number" id="moduleHeight" min="3" max="13.5" step="0.1" placeholder="3.0 - 13.5">
+                            <small>Zakres: 3.0 - 13.5 m</small>
+                        </div>
+                          <div class="form-group">
+                            <label for="moduleType">Typ modułu:</label>
+                            <select id="moduleType">
+                                <option value="dom_szkieletowy">Dom szkieletowy</option>
+                                <option value="pawilon_inne">Pawilon i inne</option>
+                            </select>
+                            <small>Dom szkieletowy: kontur 25cm, Pawilon: kontur 12cm</small>
+                        </div>
+                        
+                        <button type="submit" class="btn btn-primary">
+                            <i class="fas fa-plus"></i> Dodaj Moduł
+                        </button>
+                    </form>
+                </div>
+
+                <div class="section">
+                    <h3><i class="fas fa-list"></i> Lista Modułów</h3>
+                    <div id="modulesList" class="modules-list">
+                        <p class="empty-message">Brak modułów. Dodaj pierwszy moduł powyżej.</p>
+                    </div>
+                    <button id="clearModules" class="btn btn-danger">
+                        <i class="fas fa-trash"></i> Wyczyść Wszystkie
+                    </button>
+                </div>
+
+                <div class="section">
+                    <h3><i class="fas fa-info-circle"></i> Informacje</h3>
+                    <div class="info-panel">
+                        <div class="stat">
+                            <span class="label">Liczba modułów:</span>
+                            <span id="moduleCount" class="value">0</span>
+                        </div>
+                        <div class="stat">
+                            <span class="label">Całkowita powierzchnia:</span>
+                            <span id="totalArea" class="value">0 m²</span>
+                        </div>
+                    </div>
+                </div>
+            </div>
+
+            <!-- Canvas do rysowania -->
+            <div class="canvas-panel">
+                <div class="canvas-header">
+                    <h3><i class="fas fa-draw-polygon"></i> Wizualizacja Modułów</h3>                    <div class="canvas-controls">
+                        <button id="zoomIn" class="btn btn-secondary">
+                            <i class="fas fa-search-plus"></i> Przybliż
+                        </button>
+                        <button id="zoomOut" class="btn btn-secondary">
+                            <i class="fas fa-search-minus"></i> Oddal
+                        </button>
+                        <button id="resetView" class="btn btn-secondary">
+                            <i class="fas fa-expand-arrows-alt"></i> Reset
+                        </button>
+                        <span class="scale-info">Skala: 1m = <span id="scaleValue">30</span>px</span>
+                    </div>
+                </div>
+                <div class="canvas-container">
+                    <canvas id="moduleCanvas" width="800" height="600"></canvas>
+                    <div class="canvas-grid-info">
+                        <small>Siatka: 1m x 1m</small>
+                    </div>
+                </div>
+            </div>
+        </div>
+
+        <!-- Komunikaty -->
+        <div id="messageContainer" class="message-container"></div>
+    </div>
+
+    <script src="{{ url_for('static', filename='js/app.js') }}"></script>
+</body>
+</html>
