@@ -2,13 +2,21 @@
 class ModuleCanvas {    constructor(canvasId) {
         this.canvas = document.getElementById(canvasId);
         this.ctx = this.canvas.getContext('2d');
-        this.scale = 30; // 1m = 30px (oddalony widok)
+        this.scale = 50; // 1m = 50px (zwiększona skala dla lepszej precyzji snappingu)
         this.offsetX = 20;
         this.offsetY = 20;
         this.modules = [];
         this.selectedModule = null;
         this.isDragging = false;
         this.dragStart = { x: 0, y: 0 };
+        this.dragOffsetX = 0;
+        this.dragOffsetY = 0;
+        this.lastValidPosition = null; // Ostatnia poprawna pozycja (bez kolizji)
+          // Parametry snappingu
+        this.snapDistance = 40; // 40 pikseli = 0.8m tolerancji wykrywania (zwiększone dla mocniejszego snap)
+        this.snapPoints = []; // Punkty przyciągania wszystkich modułów
+        this.snapIndicators = []; // Wizualne wskaźniki aktywnego snappingu
+        this.isSnapping = false;
         
         this.setupEventListeners();
         this.drawGrid();
@@ -59,8 +67,7 @@ class ModuleCanvas {    constructor(canvasId) {
         this.ctx.moveTo(0, this.offsetY);
         this.ctx.lineTo(this.canvas.width, this.offsetY);
         this.ctx.stroke();
-    }
-      drawModule(module) {
+    }    drawModule(module) {
         const x = this.offsetX + (module.x * this.scale);
         const y = this.offsetY + (module.y * this.scale);
         const width = module.width * this.scale;
@@ -98,9 +105,209 @@ class ModuleCanvas {    constructor(canvasId) {
         this.ctx.lineWidth = strokeWidthPx;
         this.ctx.strokeRect(innerX, innerY, innerWidth, innerHeight);
     }
+
+    // 🧲 MECHANIZM SNAPPINGU - FUNKCJE GŁÓWNE
     
-    redraw() {
-        this.drawGrid();        this.modules.forEach(module => this.drawModule(module));
+    getSnapPoints(module) {
+        const x = this.offsetX + (module.x * this.scale);
+        const y = this.offsetY + (module.y * this.scale);
+        const widthPx = module.width * this.scale;
+        const heightPx = module.height * this.scale;
+        
+        const points = [];
+        // 9 punktów na każdym module:
+        points.push({ x: x, y: y, type: 'corner', name: 'lewy górny' }); // lewy górny
+        points.push({ x: x + widthPx, y: y, type: 'corner', name: 'prawy górny' }); // prawy górny
+        points.push({ x: x, y: y + heightPx, type: 'corner', name: 'lewy dolny' }); // lewy dolny
+        points.push({ x: x + widthPx, y: y + heightPx, type: 'corner', name: 'prawy dolny' }); // prawy dolny
+        points.push({ x: x + widthPx/2, y: y, type: 'edge', name: 'środek góry' }); // środek góry
+        points.push({ x: x + widthPx/2, y: y + heightPx, type: 'edge', name: 'środek dołu' }); // środek dołu
+        points.push({ x: x, y: y + heightPx/2, type: 'edge', name: 'środek lewa' }); // środek lewa
+        points.push({ x: x + widthPx, y: y + heightPx/2, type: 'edge', name: 'środek prawa' }); // środek prawa
+        points.push({ x: x + widthPx/2, y: y + heightPx/2, type: 'center', name: 'centrum' }); // centrum
+        return points;
+    }
+    
+    findNearestSnapPoint(mouseX, mouseY) {
+        let closestPoint = null;
+        let minDistance = this.snapDistance;
+        
+        // Przeszukuje wszystkie punkty snap z innych modułów
+        for (const snapPoint of this.snapPoints) {
+            const distance = Math.sqrt(
+                Math.pow(mouseX - snapPoint.x, 2) + 
+                Math.pow(mouseY - snapPoint.y, 2)
+            );
+            
+            if (distance < minDistance) {
+                minDistance = distance;
+                closestPoint = snapPoint;
+            }
+        }
+          return closestPoint;
+    }
+
+    // 🎯 ULEPSZONA LOGIKA SNAPPINGU - sprawdza kolizje i różne typy połączeń
+    findBestSnapPosition(mouseX, mouseY) {
+        let bestSnap = null;
+        let minDistance = this.snapDistance;
+        
+        // Pobierz punkty snap z przeciąganego modułu
+        const draggedModulePoints = this.getSnapPoints(this.selectedModule);
+        
+        // Sprawdź każdy punkt z przeciąganego modułu z każdym punktem docelowym
+        for (const dragPoint of draggedModulePoints) {
+            for (const targetPoint of this.snapPoints) {
+                // Oblicz offset między punktami
+                const offsetX = targetPoint.x - dragPoint.x;
+                const offsetY = targetPoint.y - dragPoint.y;
+                
+                // Oblicz nową pozycję modułu (lewy górny róg)
+                const newModuleX = this.selectedModule.x + (offsetX / this.scale);
+                const newModuleY = this.selectedModule.y + (offsetY / this.scale);
+                
+                // Sprawdź czy nowa pozycja mieści się w canvas
+                const maxX = (this.canvas.width - this.offsetX) / this.scale - this.selectedModule.width;
+                const maxY = (this.canvas.height - this.offsetY) / this.scale - this.selectedModule.height;
+                
+                if (newModuleX < 0 || newModuleY < 0 || newModuleX > maxX || newModuleY > maxY) {
+                    continue; // Poza granicami canvas
+                }
+                
+                // Sprawdź czy po snapie nie będzie kolizji
+                const hasCollision = this.checkCollisionLocal(
+                    newModuleX, newModuleY, 
+                    this.selectedModule.width, this.selectedModule.height, 
+                    this.selectedModule.id
+                );
+                
+                if (hasCollision) {
+                    continue; // Pomij snap powodujący kolizję
+                }
+                
+                // Oblicz odległość kursora myszy od punktu docelowego
+                const distance = Math.sqrt(
+                    Math.pow(mouseX - targetPoint.x, 2) + 
+                    Math.pow(mouseY - targetPoint.y, 2)
+                );
+                
+                // Preferuj połączenia ściana-ściana i narożnik-narożnik
+                let priority = distance;
+                if (this.isWallToWallConnection(dragPoint, targetPoint)) {
+                    priority *= 0.7; // 30% bonusu dla połączeń ściana-ściana
+                } else if (this.isCornerToCornerConnection(dragPoint, targetPoint)) {
+                    priority *= 0.8; // 20% bonusu dla połączeń narożnik-narożnik
+                }
+                
+                if (priority < minDistance) {
+                    minDistance = priority;
+                    bestSnap = {
+                        targetPoint: targetPoint,
+                        dragPoint: dragPoint,
+                        newPosition: { x: newModuleX, y: newModuleY },
+                        distance: distance,
+                        type: this.getConnectionType(dragPoint, targetPoint)
+                    };
+                }
+            }
+        }
+        
+        return bestSnap;
+    }
+    
+    // Sprawdza czy to połączenie ściana-ściana
+    isWallToWallConnection(point1, point2) {
+        return (point1.type === 'edge' && point2.type === 'edge');
+    }
+    
+    // Sprawdza czy to połączenie narożnik-narożnik  
+    isCornerToCornerConnection(point1, point2) {
+        return (point1.type === 'corner' && point2.type === 'corner');
+    }
+    
+    // Określa typ połączenia
+    getConnectionType(dragPoint, targetPoint) {
+        if (this.isWallToWallConnection(dragPoint, targetPoint)) {
+            return 'wall-to-wall';
+        } else if (this.isCornerToCornerConnection(dragPoint, targetPoint)) {
+            return 'corner-to-corner';
+        } else if (dragPoint.type === 'center' || targetPoint.type === 'center') {
+            return 'center-snap';
+        } else {
+            return 'mixed';
+        }
+    }
+    
+    updateSnapPoints() {
+        this.snapPoints = [];
+        
+        this.modules.forEach(module => {
+            if (!this.selectedModule || module.id !== this.selectedModule.id) {
+                // Dodaj punkty snap ze wszystkich modułów OPRÓCZ przeciąganego
+                const moduleSnapPoints = this.getSnapPoints(module);
+                this.snapPoints.push(...moduleSnapPoints);
+            }
+        });
+    }
+    
+    drawSnapIndicators() {
+        this.snapIndicators.forEach(indicator => {
+            this.ctx.save();
+            
+            // Czerwony krzyżyk z okręgiem
+            this.ctx.strokeStyle = '#FF3333';
+            this.ctx.lineWidth = 3;
+            
+            // Krzyżyk (12px x 12px)
+            this.ctx.beginPath();
+            this.ctx.moveTo(indicator.x - 6, indicator.y);
+            this.ctx.lineTo(indicator.x + 6, indicator.y);
+            this.ctx.moveTo(indicator.x, indicator.y - 6);
+            this.ctx.lineTo(indicator.x, indicator.y + 6);
+            this.ctx.stroke();
+            
+            // Okrąg (promień 8px)
+            this.ctx.beginPath();
+            this.ctx.arc(indicator.x, indicator.y, 8, 0, 2 * Math.PI);
+            this.ctx.stroke();
+              // Tekst pokazujący typ połączenia
+            this.ctx.fillStyle = '#FF3333';
+            this.ctx.font = 'bold 12px Arial';
+            this.ctx.textAlign = 'center';
+            
+            let snapText = 'SNAP!';
+            if (window.moduleApp && window.moduleApp.lastSnapInfo) {
+                const type = window.moduleApp.lastSnapInfo.type;
+                const typeTexts = {
+                    'wall-to-wall': 'ŚCIANA→ŚCIANA',
+                    'corner-to-corner': 'NAROŻNIK→NAROŻNIK',
+                    'center-snap': 'CENTROWANIE',
+                    'mixed': 'SNAP!'
+                };
+                snapText = typeTexts[type] || 'SNAP!';
+            }
+            
+            this.ctx.fillText(snapText, indicator.x, indicator.y - 15);
+            
+            this.ctx.restore();
+        });
+        
+        // Rysuj wszystkie dostępne punkty snap podczas przeciągania
+        if (this.isDragging && this.selectedModule) {
+            this.snapPoints.forEach(point => {
+                this.ctx.save();
+                this.ctx.fillStyle = '#FFA500';
+                this.ctx.beginPath();
+                this.ctx.arc(point.x, point.y, 3, 0, 2 * Math.PI);
+                this.ctx.fill();
+                this.ctx.restore();
+            });
+        }
+    }
+      redraw() {
+        this.drawGrid();        
+        this.modules.forEach(module => this.drawModule(module));
+        this.drawSnapIndicators(); // Dodaj rysowanie wskaźników snappingu
     }
     
     checkCollisionLocal(x, y, width, height, excludeId = null) {
@@ -149,9 +356,7 @@ class ModuleCanvas {    constructor(canvasId) {
                    canvasY >= module.y &&
                    canvasY <= module.y + module.height;
         });
-    }
-    
-    handleMouseDown(e) {
+    }    handleMouseDown(e) {
         const rect = this.canvas.getBoundingClientRect();
         const x = e.clientX - rect.left;
         const y = e.clientY - rect.top;
@@ -160,40 +365,136 @@ class ModuleCanvas {    constructor(canvasId) {
         if (module) {
             this.selectedModule = module;
             this.isDragging = true;
+            
+            // Zapisz aktualną pozycję jako ostatnią poprawną (na wypadek cofania)
+            this.lastValidPosition = {
+                x: module.x,
+                y: module.y
+            };
+            
+            // Oblicz offset dla precyzyjnego przeciągania
+            const moduleCanvasX = this.offsetX + (module.x * this.scale);
+            const moduleCanvasY = this.offsetY + (module.y * this.scale);
+            this.dragOffsetX = x - moduleCanvasX;
+            this.dragOffsetY = y - moduleCanvasY;
+            
             this.dragStart = { x, y };
             this.canvas.style.cursor = 'grabbing';
+            
+            // Aktualizuj punkty snap (bez aktualnie przeciąganego modułu)
+            this.updateSnapPoints();
         }
-    }
-    
-    handleMouseMove(e) {
+    }handleMouseMove(e) {
         const rect = this.canvas.getBoundingClientRect();
-        const x = e.clientX - rect.left;
-        const y = e.clientY - rect.top;
+        const mouseX = e.clientX - rect.left;
+        const mouseY = e.clientY - rect.top;
           if (this.isDragging && this.selectedModule) {
-            const deltaX = (x - this.dragStart.x) / this.scale;
-            const deltaY = (y - this.dragStart.y) / this.scale;
+            // Oblicz docelową pozycję lewego górnego rogu modułu (bez snappingu)
+            let newCanvasX = mouseX - this.dragOffsetX;
+            let newCanvasY = mouseY - this.dragOffsetY;
             
-            const newX = Math.max(0, this.selectedModule.x + deltaX);
-            const newY = Math.max(0, this.selectedModule.y + deltaY);
+            // Konwertuj pozycję canvas na pozycję w metrach
+            let newX = (newCanvasX - this.offsetX) / this.scale;
+            let newY = (newCanvasY - this.offsetY) / this.scale;
             
-            // Sprawdź kolizję przed przeniesieniem
-            if (!this.checkCollisionLocal(newX, newY, this.selectedModule.width, this.selectedModule.height, this.selectedModule.id)) {
-                this.selectedModule.x = newX;
-                this.selectedModule.y = newY;
-                this.dragStart = { x, y };
-                this.redraw();
+            // Sprawdź czy znajduje się w granicach canvas
+            const maxX = (this.canvas.width - this.offsetX) / this.scale - this.selectedModule.width;
+            const maxY = (this.canvas.height - this.offsetY) / this.scale - this.selectedModule.height;
+            
+            newX = Math.max(0, Math.min(newX, maxX));
+            newY = Math.max(0, Math.min(newY, maxY));            // Sprawdź ulepszone snapping
+            const bestSnap = this.findBestSnapPosition(mouseX, mouseY);
+            
+            if (bestSnap) {
+                // SNAP AKTYWNY - użyj pozycji z najlepszego snap'u
+                newX = bestSnap.newPosition.x;
+                newY = bestSnap.newPosition.y;
+                this.snapIndicators = [bestSnap.targetPoint];
+                this.canvas.style.cursor = 'crosshair';
+                this.isSnapping = true;
+                
+                // Zapisz informacje o snapie do pokazania w komunikacie
+                if (window.moduleApp) {
+                    window.moduleApp.lastSnapInfo = {
+                        type: bestSnap.type,
+                        dragPoint: bestSnap.dragPoint.name,
+                        targetPoint: bestSnap.targetPoint.name
+                    };
+                }
+                
+                console.log(`SNAP! ${bestSnap.type} - ${bestSnap.dragPoint.name} → ${bestSnap.targetPoint.name}`);
+            } else {
+                // Jeśli nie ma snap'u, użyj normalnej pozycji
+                this.snapIndicators = [];
+                this.canvas.style.cursor = 'grabbing';
+                this.isSnapping = false;
+                if (window.moduleApp) {
+                    window.moduleApp.lastSnapInfo = null;
+                }
             }
+            
+            // ZAWSZE pozwól na ruch podczas przeciągania - kolizje sprawdzane tylko wizualnie
+            this.selectedModule.x = newX;
+            this.selectedModule.y = newY;
+            
+            this.redraw();
         } else {
             // Zmiana kursora
-            const module = this.getModuleAt(x, y);
+            const module = this.getModuleAt(mouseX, mouseY);
             this.canvas.style.cursor = module ? 'grab' : 'crosshair';
         }
-    }
-    
-    handleMouseUp(e) {
+    }    handleMouseUp(e) {
         if (this.isDragging) {
+            // Sprawdź czy moduł jest w kolizji po puszczeniu
+            const hasCollision = this.checkCollisionLocal(
+                this.selectedModule.x, 
+                this.selectedModule.y, 
+                this.selectedModule.width, 
+                this.selectedModule.height, 
+                this.selectedModule.id
+            );
+              if (hasCollision && !this.isSnapping) {
+                // Jeśli jest kolizja i nie ma snappingu, przywróć poprzednią pozycję
+                if (this.lastValidPosition) {
+                    this.selectedModule.x = this.lastValidPosition.x;
+                    this.selectedModule.y = this.lastValidPosition.y;
+                    if (window.moduleApp) {
+                        window.moduleApp.showMessage('Nie można umieścić modułu w tym miejscu - kolizja!', 'error');
+                    }
+                }
+            } else {
+                // Zapisz aktualną pozycję jako ostatnią poprawną
+                this.lastValidPosition = {
+                    x: this.selectedModule.x,
+                    y: this.selectedModule.y
+                };
+                
+                // Jeśli snap był aktywny, pokaż komunikat o udanym połączeniu
+                if (this.isSnapping && this.snapIndicators.length > 0) {
+                    if (window.moduleApp && window.moduleApp.lastSnapInfo) {
+                        const snapInfo = window.moduleApp.lastSnapInfo;
+                        const typeNames = {
+                            'wall-to-wall': 'Połączenie ściana-ściana',
+                            'corner-to-corner': 'Połączenie narożnik-narożnik',
+                            'center-snap': 'Centrowanie modułu',
+                            'mixed': 'Przyciągnięcie do punktu'
+                        };
+                        const typeName = typeNames[snapInfo.type] || 'Przyciągnięcie';
+                        window.moduleApp.showMessage(`${typeName}: ${snapInfo.dragPoint} → ${snapInfo.targetPoint}`, 'success');
+                        window.moduleApp.lastSnapInfo = null; // Wyczyść
+                    } else {
+                        window.moduleApp.showMessage('Moduł został pomyślnie przyciągnięty!', 'success');
+                    }
+                }
+            }
+            
             this.isDragging = false;
             this.canvas.style.cursor = 'crosshair';
+            
+            // Wyczyść wskaźniki snap
+            this.snapIndicators = [];
+            this.isSnapping = false;
+            this.redraw();
         }
     }
       handleClick(e) {
@@ -273,15 +574,13 @@ class ModuleCanvas {    constructor(canvasId) {
         this.selectedModule = null;
         this.redraw();
     }
-    
-    resetView() {
-        this.scale = 30;
+      resetView() {
+        this.scale = 50; // Zmieniona domyślna skala na 50
         this.redraw();
         document.getElementById('scaleValue').textContent = this.scale;
     }
-    
-    zoomIn() {
-        if (this.scale < 80) {
+      zoomIn() {
+        if (this.scale < 100) { // Zwiększona maksymalna skala
             this.scale += 10;
             this.redraw();
             document.getElementById('scaleValue').textContent = this.scale;
@@ -289,7 +588,7 @@ class ModuleCanvas {    constructor(canvasId) {
     }
     
     zoomOut() {
-        if (this.scale > 20) {
+        if (this.scale > 30) { // Zwiększona minimalna skala
             this.scale -= 10;
             this.redraw();
             document.getElementById('scaleValue').textContent = this.scale;

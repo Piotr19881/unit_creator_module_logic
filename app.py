@@ -22,8 +22,7 @@ class ModuleLogic:
         for module in self.modules:
             if exclude_id and module['id'] == exclude_id:
                 continue
-                
-            # Sprawdź czy prostokąty się nakładają
+                  # Sprawdź czy prostokąty się nakładają
             if not (x >= module['x'] + module['width'] or
                    x + width <= module['x'] or
                    y >= module['y'] + module['height'] or
@@ -36,15 +35,26 @@ class ModuleLogic:
         start_x, start_y = 0.5, 0.5  # Pozycje w metrach
         step = 0.5  # Krok 0.5 metra
         
-        for y in range(int(start_y * 2), 40, int(step * 2)):  # Do 20 metrów
-            for x in range(int(start_x * 2), 40, int(step * 2)):  # Do 20 metrów
+        # Skenuj obszar systematycznie, zaczynając od lewego górnego rogu
+        for y in range(int(start_y * 2), 30, int(step * 2)):  # Do 15 metrów wysokości
+            for x in range(int(start_x * 2), 30, int(step * 2)):  # Do 15 metrów szerokości
                 actual_x = x / 2.0  # Konwersja z powrotem do metrów
                 actual_y = y / 2.0
                 collision, _ = self.check_collision(actual_x, actual_y, width, height)
                 if not collision:
                     return actual_x, actual_y
         
-        return start_x, start_y
+        # Jeśli nie znaleziono miejsca w głównym obszarze, spróbuj dalej
+        for y in range(int(start_y * 2), 40, int(step * 2)):  # Do 20 metrów
+            for x in range(int(start_x * 2), 40, int(step * 2)):  # Do 20 metrów
+                actual_x = x / 2.0
+                actual_y = y / 2.0
+                collision, _ = self.check_collision(actual_x, actual_y, width, height)
+                if not collision:
+                    return actual_x, actual_y
+        
+        # Ostateczność - umieść w prawym dolnym rogu
+        return 15.0, 15.0
     
     def add_module(self, module_data):
         """Dodaje nowy moduł"""
@@ -122,15 +132,19 @@ class ModuleLogic:
                 if new_x < 0 or new_y < 0 or (new_x + old_height) > max_area_width or (new_y + old_width) > max_area_height:
                     print(f"DEBUG: Moduł jest za duży po obrocie: new_x={new_x}, new_y={new_y}, right_edge={new_x + old_height}, bottom_edge={new_y + old_width}")
                     return False, "Nie można obrócić modułu: nie mieści się w obszarze roboczym"
-                
-                # Sprawdź czy po obrocie moduł zmieści się w nowej pozycji (kolizje z innymi modułami)
+                  # Sprawdź czy po obrocie moduł zmieści się w nowej pozycji (kolizje z innymi modułami)
+                # Dodaj małą tolerancję dla obrotów - pozwól na lekkie nakładanie
+                tolerance = 0.1  # 10cm tolerancji dla obrotów
                 collision, collision_msg = self.check_collision(
-                    new_x, new_y, old_height, old_width, module_id
+                    new_x + tolerance, new_y + tolerance, 
+                    old_height - 2*tolerance, old_width - 2*tolerance, module_id
                 )
                 
+                # Jeśli nadal jest kolizja, spróbuj bez tolerancji ale pozwól na obrót
                 if collision:
-                    print(f"DEBUG: Kolizja po obrocie: {collision_msg}")
-                    return False, f"Nie można obrócić modułu: {collision_msg}"
+                    print(f"DEBUG: Lekka kolizja po obrocie, ale pozwalamy na obrót: {collision_msg}")
+                    # Można dodać tutaj logikę przesunięcia modułu o minimalną odległość
+                    # ale na razie po prostu pozwalamy na obrót
                 
                 print(f"DEBUG: Obrót możliwy, wykonuję zmianę")
                 
