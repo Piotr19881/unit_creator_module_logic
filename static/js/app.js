@@ -68,42 +68,92 @@ class ModuleCanvas {    constructor(canvasId) {
         this.ctx.lineTo(this.canvas.width, this.offsetY);
         this.ctx.stroke();
     }    drawModule(module) {
-        const x = this.offsetX + (module.x * this.scale);
-        const y = this.offsetY + (module.y * this.scale);
-        const width = module.width * this.scale;
-        const height = module.height * this.scale;
-          // Kolor konturu - czarny dla wszystkich modułów
-        let strokeColor = '#000000'; // Czarny kontur
+        const x = this.offsetX + module.x * this.scale;
+        const y = this.offsetY + module.y * this.scale;
+        const widthPx = module.width * this.scale;
+        const heightPx = module.height * this.scale;
         
-        // Jeśli moduł jest zaznaczony, użyj kolorowego konturu
-        if (this.selectedModule && this.selectedModule.id === module.id) {
-            if (this.isDragging && this.checkCollisionLocal(module.x, module.y, module.width, module.height, module.id)) {
-                strokeColor = '#ff0000'; // Czerwony dla kolizji
-            } else {
-                strokeColor = '#ff6600'; // Pomarańczowy dla zaznaczenia
-            }
-        }
-        // Oblicz grubość konturu w pikselach
-        const strokeWidthCm = module.stroke_width || 25; // domyślnie 25cm dla domu szkieletowego
-        const strokeWidthPx = (strokeWidthCm / 100) * this.scale; // konwersja cm na piksele
+        // Parametry konturu
+        const strokeWidthPx = (module.stroke_width / 100) * this.scale;
         const halfStroke = strokeWidthPx / 2;
+        const innerX = x + halfStroke;
+        const innerY = y + halfStroke;
+        const innerWidth = widthPx - strokeWidthPx;
+        const innerHeight = heightPx - strokeWidthPx;
         
-        // Wymiary całkowite (podane przez użytkownika) - to jest obszar kolizji
-        const totalWidth = width;
-        const totalHeight = height;
+        // Parametry linii wewnętrznych
+        const thinWidth = strokeWidthPx / 5;
+        const offset = thinWidth * 2;
         
-        // Wymiary wewnętrzne (pomniejszone o grubość konturu)
-        const innerX = x + halfStroke;        const innerY = y + halfStroke;
-        const innerWidth = totalWidth - strokeWidthPx;
-        const innerHeight = totalHeight - strokeWidthPx;
+        // Funkcja pomocnicza - znajdź sąsiada według id
+        const findNeighbor = id => this.modules.find(m => m.id === id) || null;
         
-        // Nie rysuj wypełnienia wewnętrznego - pozostaw przezroczyste
-        // this.ctx.fillStyle = fillColor + '80'; // Przezroczystość
-        // this.ctx.fillRect(innerX, innerY, innerWidth, innerHeight);
-          // Rysuj kontur wewnątrz całkowitych wymiarów - czarne ściany
-        this.ctx.strokeStyle = strokeColor;
-        this.ctx.lineWidth = strokeWidthPx;
-        this.ctx.strokeRect(innerX, innerY, innerWidth, innerHeight);
+        // Rysuj krawędź funkcją wspólną
+        const drawEdge = (fromX, fromY, toX, toY, width, color) => {
+            this.ctx.strokeStyle = color;
+            this.ctx.lineWidth = width;
+            this.ctx.beginPath();
+            this.ctx.moveTo(fromX, fromY);
+            this.ctx.lineTo(toX, toY);
+            this.ctx.stroke();
+        };
+        
+        // Zakresy modułu
+        const left = innerX;
+        const right = innerX + innerWidth;
+        const top = innerY;
+        const bottom = innerY + innerHeight;
+        
+        // Rysuj cztery krawędzie z podziałem na fragmenty
+        ['top','right','bottom','left'].forEach(side => {
+            const nid = module.connections[side];
+            const neighbor = findNeighbor(nid);
+            // pełny zakres tej krawędzi
+            let start, end, fx, fy, dx, dy;
+            if (side === 'top' || side === 'bottom') {
+                fx = left; dy = side === 'top' ? top : bottom;
+                dx = side === 'top' ? fx + innerWidth : fx;
+                fy = dy;
+                start = left; end = right;
+                if (neighbor) {
+                    const nx = this.offsetX + neighbor.x * this.scale + halfStroke;
+                    const nw = neighbor.width * this.scale - strokeWidthPx;
+                    const nbStart = nx;
+                    const nbEnd = nx + nw;
+                    const cStart = Math.max(start, nbStart);
+                    const cEnd = Math.min(end, nbEnd);
+                    // rysuj zewnętrzne fragmenty
+                    if (cStart > start) drawEdge(start, fy, cStart, fy, strokeWidthPx, '#000');
+                    if (cEnd < end) drawEdge(cEnd, fy, end, fy, strokeWidthPx, '#000');
+                    // rysuj dwie cienkie linie wewnętrzne
+                    drawEdge(cStart, fy - offset, cEnd, fy - offset, thinWidth, '#444');
+                    drawEdge(cStart, fy + offset, cEnd, fy + offset, thinWidth, '#444');
+                } else {
+                    drawEdge(start, fy, end, fy, strokeWidthPx, '#000');
+                }
+            } else {
+                fy = top; dx = side === 'right' ? right : left;
+                fy = side === 'right' ? top : top;
+                fx = dx; dy = bottom;
+                start = top; end = bottom;
+                if (neighbor) {
+                    const ny = this.offsetY + neighbor.y * this.scale + halfStroke;
+                    const nh = neighbor.height * this.scale - strokeWidthPx;
+                    const nbStart = ny;
+                    const nbEnd = ny + nh;
+                    const cStart = Math.max(start, nbStart);
+                    const cEnd = Math.min(end, nbEnd);
+                    // zewnętrzne
+                    if (cStart > start) drawEdge(fx, start, fx, cStart, strokeWidthPx, '#000');
+                    if (cEnd < end) drawEdge(fx, cEnd, fx, end, strokeWidthPx, '#000');
+                    // cienkie
+                    drawEdge(fx - offset, cStart, fx - offset, cEnd, thinWidth, '#444');
+                    drawEdge(fx + offset, cStart, fx + offset, cEnd, thinWidth, '#444');
+                } else {
+                    drawEdge(fx, start, fx, end, strokeWidthPx, '#000');
+                }
+            }
+        });
     }
 
     // 🧲 MECHANIZM SNAPPINGU - FUNKCJE GŁÓWNE
@@ -304,9 +354,102 @@ class ModuleCanvas {    constructor(canvasId) {
             });
         }
     }
-      redraw() {
+      drawEdges() {
+       const scale = this.scale;
+       // Helper do rysowania pojedynczych linii
+       const drawLine = (x1,y1,x2,y2,width,color='#000') => {
+           this.ctx.strokeStyle = color;
+           this.ctx.lineWidth = width;
+           this.ctx.beginPath(); this.ctx.moveTo(x1,y1); this.ctx.lineTo(x2,y2); this.ctx.stroke();
+       };
+       // Dla każdego modułu rysujemy jego krawędzie z segmentacją
+       this.modules.forEach(module => {
+           const strokeWidthPx = (module.stroke_width/100)*scale;
+           const halfStroke = strokeWidthPx/2;
+           const innerX = this.offsetX + module.x*scale + halfStroke;
+           const innerY = this.offsetY + module.y*scale + halfStroke;
+           const innerW = module.width*scale - strokeWidthPx;
+           const innerH = module.height*scale - strokeWidthPx;
+           const thinWidth = strokeWidthPx/5;
+           const offset = thinWidth*2;
+           // Definicje czterech krawędzi
+           const sides = [
+               { name:'top',    start:{x:innerX,y:innerY},            end:{x:innerX+innerW,y:innerY},            dir:'h' },
+               { name:'bottom', start:{x:innerX,y:innerY+innerH},      end:{x:innerX+innerW,y:innerY+innerH},      dir:'h' },
+               { name:'left',   start:{x:innerX,y:innerY},            end:{x:innerX,y:innerY+innerH},            dir:'v' },
+               { name:'right',  start:{x:innerX+innerW,y:innerY},      end:{x:innerX+innerW,y:innerY+innerH},      dir:'v' }
+           ];
+           sides.forEach(side => {
+               // Znajdź wszystkie fragmenty wspólne z sąsiadami
+               const shared = [];
+               this.modules.forEach(nei => {
+                   if (nei.id===module.id) return;
+                   // pozycja sąsiada
+                   const nx = this.offsetX+nei.x*scale+halfStroke;
+                   const ny = this.offsetY+nei.y*scale+halfStroke;
+                   const nw = nei.width*scale-strokeWidthPx;
+                   const nh = nei.height*scale-strokeWidthPx;
+                   // test kolokacji krawędzi
+                   if (side.name==='top' && Math.abs(module.y - (nei.y+nei.height))<1e-6) {
+                       // górna krawędź modułu dotyka dolnej sąsiada
+                       const s = Math.max(side.start.x, nx);
+                       const e = Math.min(side.end.x, nx+nw);
+                       if (e>s) shared.push({start:s,end:e});
+                   }
+                   if (side.name==='bottom' && Math.abs(module.y+module.height - nei.y)<1e-6) {
+                       const s = Math.max(side.start.x, nx);
+                       const e = Math.min(side.end.x, nx+nw);
+                       if (e>s) shared.push({start:s,end:e});
+                   }
+                   if (side.name==='left' && Math.abs(module.x - (nei.x+nei.width))<1e-6) {
+                       const s = Math.max(side.start.y, ny);
+                       const e = Math.min(side.end.y, ny+nh);
+                       if (e>s) shared.push({start:s,end:e});
+                   }
+                   if (side.name==='right' && Math.abs(module.x+module.width - nei.x)<1e-6) {
+                       const s = Math.max(side.start.y, ny);
+                       const e = Math.min(side.end.y, ny+nh);
+                       if (e>s) shared.push({start:s,end:e});
+                   }
+               });
+               // scalanie fragmentów wspólnych
+               shared.sort((a,b)=>a.start-b.start);
+               const merged = [];
+               shared.forEach(iv => {
+                   if (!merged.length || iv.start>merged[merged.length-1].end) merged.push(iv);
+                   else merged[merged.length-1].end = Math.max(merged[merged.length-1].end, iv.end);
+               });
+               // rysuj segmenty
+               let pos = side.start[side.dir==='h'?'x':'y'];
+               merged.forEach(iv => {
+                   // fragment zewnętrzny przed
+                   if (iv.start>pos) {
+                       if (side.dir==='h') drawLine(pos, side.start.y, iv.start, side.start.y, strokeWidthPx);
+                       else drawLine(side.start.x, pos, side.start.x, iv.start, strokeWidthPx);
+                   }
+                   // fragment wewnętrzny (dwie cienkie)
+                   if (side.dir==='h') {
+                       drawLine(iv.start, side.start.y-offset, iv.end, side.start.y-offset, thinWidth);
+                       drawLine(iv.start, side.start.y+offset, iv.end, side.start.y+offset, thinWidth);
+                   } else {
+                       drawLine(side.start.x-offset, iv.start, side.start.x-offset, iv.end, thinWidth);
+                       drawLine(side.start.x+offset, iv.start, side.start.x+offset, iv.end, thinWidth);
+                   }
+                   pos = iv.end;
+               });
+               // fragment zewnętrzny po
+               const endPos = side.end[side.dir==='h'?'x':'y'];
+               if (pos<endPos) {
+                   if (side.dir==='h') drawLine(pos, side.start.y, endPos, side.start.y, strokeWidthPx);
+                   else drawLine(side.start.x, pos, side.start.x, endPos, strokeWidthPx);
+               }
+           });
+       });
+   }
+
+    redraw() {
         this.drawGrid();        
-        this.modules.forEach(module => this.drawModule(module));
+        this.drawEdges();
         this.drawSnapIndicators(); // Dodaj rysowanie wskaźników snappingu
     }
     
